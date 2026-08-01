@@ -1,2 +1,9 @@
-# infra-terraform-actions-deploying-async-jobs-and-vision-infer
-infra: Terraform + Actions deploying async-jobs and vision-infer — Terraform, Fly.io provider, GitHub Actions
+# infra
+
+Terraform modules and GitHub Actions pipelines for `async-jobs` and `vision-infer` on AWS ECS Fargate.
+
+Two environments — staging and prod — with separate state and variable files.
+
+## Status
+
+Work in progress. Full README with architecture diagram and runbook lands after all modules are wired.
