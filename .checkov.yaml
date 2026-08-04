@@ -1,0 +1,19 @@
+# Checkov configuration.
+# Skipped checks are documented below with the reason.
+
+framework:
+  - terraform
+
+skip-check:
+  # CKV_AWS_131: ALB drop invalid headers — intentionally omitted because
+  # the ALB resource lives outside this repo (shared infra layer).
+  - CKV_AWS_131
+
+  # CKV2_AWS_5: Security groups not attached to a resource — false positive
+  # for SGs created in modules whose attachment is in the calling environment.
+  - CKV2_AWS_5
+
+# Fail on any non-skipped HIGH or CRITICAL finding.
+check:
+  - HIGH
+  - CRITICAL
