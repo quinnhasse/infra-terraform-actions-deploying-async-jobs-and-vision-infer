@@ -1,0 +1,178 @@
+name: Drift detection
+
+on:
+  schedule:
+    # Run at 06:00 UTC every day.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+env:
+  TF_VERSION: "1.8.5"
+
+jobs:
+  drift-staging:
+    name: Detect drift — staging
+    runs-on: ubuntu-latest
+    environment: staging
+    defaults:
+      run:
+        working-directory: environments/staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform plan (drift check)
+        id: plan
+        run: |
+          terraform plan \
+            -input=false \
+            -detailed-exitcode \
+            -no-color \
+            2>&1 | tee drift.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        # Exit code 0 = no changes, 1 = error, 2 = changes detected.
+        continue-on-error: true
+
+      - name: Open issue on drift
+        if: steps.plan.outputs.exit_code == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const drift = fs.readFileSync('environments/staging/drift.txt', 'utf8');
+            const truncated = drift.length > 60000 ? drift.slice(0, 60000) + '\n...(truncated)' : drift;
+
+            const title = `Drift detected in staging — ${new Date().toISOString().slice(0, 10)}`;
+
+            // Check for an existing open drift issue to avoid duplicates.
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+            });
+            const existing = issues.find(i => i.title.startsWith('Drift detected in staging'));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Updated drift detected on ${new Date().toISOString()}.\n\n<details><summary>Plan</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `Terraform detected out-of-band changes in **staging**.\n\nRun \`terraform apply\` in \`environments/staging\` to reconcile, or investigate the drift.\n\n<details><summary>Plan output</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`,
+                labels: ['drift', 'staging'],
+              });
+            }
+
+      - name: Fail job on drift
+        if: steps.plan.outputs.exit_code == '2'
+        run: |
+          echo "Drift detected in staging. See the opened issue."
+          exit 1
+
+      - name: Fail job on plan error
+        if: steps.plan.outputs.exit_code == '1'
+        run: exit 1
+
+  drift-prod:
+    name: Detect drift — prod
+    runs-on: ubuntu-latest
+    environment: prod
+    defaults:
+      run:
+        working-directory: environments/prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform plan (drift check)
+        id: plan
+        run: |
+          terraform plan \
+            -input=false \
+            -detailed-exitcode \
+            -no-color \
+            2>&1 | tee drift.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Open issue on drift
+        if: steps.plan.outputs.exit_code == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const drift = fs.readFileSync('environments/prod/drift.txt', 'utf8');
+            const truncated = drift.length > 60000 ? drift.slice(0, 60000) + '\n...(truncated)' : drift;
+
+            const title = `Drift detected in prod — ${new Date().toISOString().slice(0, 10)}`;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+            });
+            const existing = issues.find(i => i.title.startsWith('Drift detected in prod'));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Updated drift detected on ${new Date().toISOString()}.\n\n<details><summary>Plan</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `Terraform detected out-of-band changes in **prod**.\n\nRun \`terraform apply\` in \`environments/prod\` to reconcile, or investigate the drift.\n\n<details><summary>Plan output</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`,
+                labels: ['drift', 'prod'],
+              });
+            }
+
+      - name: Fail job on drift
+        if: steps.plan.outputs.exit_code == '2'
+        run: |
+          echo "Drift detected in prod. See the opened issue."
+          exit 1
+
+      - name: Fail job on plan error
+        if: steps.plan.outputs.exit_code == '1'
+        run: exit 1

@@ -1,0 +1,114 @@
+name: OPA policy check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "policy/**"
+      - ".github/workflows/opa-policy.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  TF_VERSION: "1.8.5"
+  OPA_VERSION: "0.65.0"
+
+jobs:
+  opa-staging:
+    name: OPA — staging
+    runs-on: ubuntu-latest
+    environment: staging
+    defaults:
+      run:
+        working-directory: environments/staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Install OPA
+        run: |
+          curl -sSfL \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static" \
+            -o /usr/local/bin/opa
+          chmod +x /usr/local/bin/opa
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform plan (JSON output)
+        run: |
+          terraform plan \
+            -input=false \
+            -out=plan.tfplan
+          terraform show -json plan.tfplan > plan.json
+
+      - name: Run OPA tag policy
+        run: opa eval --fail-defined --data ../../policy/tags.rego --input plan.json "data.terraform.tags.deny"
+
+      - name: Run OPA encryption policy
+        run: opa eval --fail-defined --data ../../policy/encryption.rego --input plan.json "data.terraform.encryption.deny"
+
+      - name: Run OPA public access policy
+        run: opa eval --fail-defined --data ../../policy/public_access.rego --input plan.json "data.terraform.public_access.deny"
+
+  opa-prod:
+    name: OPA — prod
+    runs-on: ubuntu-latest
+    environment: prod
+    defaults:
+      run:
+        working-directory: environments/prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Install OPA
+        run: |
+          curl -sSfL \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static" \
+            -o /usr/local/bin/opa
+          chmod +x /usr/local/bin/opa
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform plan (JSON output)
+        run: |
+          terraform plan \
+            -input=false \
+            -out=plan.tfplan
+          terraform show -json plan.tfplan > plan.json
+
+      - name: Run OPA tag policy
+        run: opa eval --fail-defined --data ../../policy/tags.rego --input plan.json "data.terraform.tags.deny"
+
+      - name: Run OPA encryption policy
+        run: opa eval --fail-defined --data ../../policy/encryption.rego --input plan.json "data.terraform.encryption.deny"
+
+      - name: Run OPA public access policy
+        run: opa eval --fail-defined --data ../../policy/public_access.rego --input plan.json "data.terraform.public_access.deny"
